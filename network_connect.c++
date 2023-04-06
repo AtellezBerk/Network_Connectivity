@@ -1,53 +1,73 @@
-#include <winsock2.h> // for socket programming
-#include <iphlpapi.h> // for ping functions
-#include <iostream>   // for console output
+#include <sys/socket.h>      // for socket programming
+#include <netinet/ip_icmp.h> // for ping functions
+#include <netdb.h>           // for getaddrinfo function
+#include <iostream>          // for console output
+#include <string.h>          // for memset function
 
 int ping(const char** hosts, int numHosts) {
     int numConnected = 0;
 
     for (int i = 0; i < numHosts; i++) {
-        in_addr destAddr;
-        if (inet_pton(AF_INET, hosts[i], &destAddr) != 1) {
-            std::cout << "invalid destination IP address!" << std::endl;
+        struct addrinfo hints, * res;
+        memset(&hints, 0, sizeof(hints));
+        hints.ai_family = AF_INET;
+        hints.ai_socktype = SOCK_DGRAM;
+        hints.ai_protocol = IPPROTO_ICMP;
+
+        if (getaddrinfo(hosts[i], nullptr, &hints, &res) != 0) {
+            std::cout << "getaddrinfo failed!" << std::endl;
             continue;
         }
 
-        sockaddr_in destSockAddr;
-        destSockAddr.sin_family = AF_INET;
-        destSockAddr.sin_addr = destAddr;
-        destSockAddr.sin_port = 0;
+        int sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_ICMP);
+        if (sock < 0) {
+            std::cout << "socket creation failed!" << std::endl;
+            continue;
+        }
 
         const int packetSize = 32; // size of the packet payload
         char packet[packetSize];
         memset(packet, 0, packetSize);
-        ICMP_ECHO_REPLY* reply = (ICMP_ECHO_REPLY*)packet;
-        reply->Data = "network connectivity checker by ChatGPT"; // custom payload data
+        struct icmp* icmpHeader = (struct icmp*)packet;
+        icmpHeader->icmp_type = ICMP_ECHO;
+        icmpHeader->icmp_code = 0;
+        icmpHeader->icmp_id = htons(getpid());
+        icmpHeader->icmp_seq = htons(i);
+        char* payload = packet + sizeof(struct icmp);
+        memset(payload, 'A', packetSize - sizeof(struct icmp));
 
-        if (sendto(sock, packet, packetSize, 0, (sockaddr*)&destSockAddr, sizeof(destSockAddr)) == SOCKET_ERROR) {
+        struct sockaddr_in destSockAddr;
+        memset(&destSockAddr, 0, sizeof(destSockAddr));
+        destSockAddr.sin_family = AF_INET;
+        destSockAddr.sin_addr.s_addr = ((struct sockaddr_in*)res->ai_addr)->sin_addr.s_addr;
+
+        if (sendto(sock, packet, packetSize, 0, (struct sockaddr*)&destSockAddr, sizeof(destSockAddr)) == -1) {
             std::cout << "sendto failed!" << std::endl;
+            close(sock);
             continue;
         }
 
-        char recvBuffer[packetSize + sizeof(sockaddr_in) + sizeof(DWORD)]; // buffer for receiving reply
-        sockaddr_in fromSockAddr;
-        int fromSockAddrLen = sizeof(fromSockAddr);
-        DWORD numBytesRecv = recvfrom(sock, recvBuffer, sizeof(recvBuffer), 0, (sockaddr*)&fromSockAddr, &fromSockAddrLen);
-        if (numBytesRecv == SOCKET_ERROR) {
+        char recvBuffer[packetSize + sizeof(struct ip) + sizeof(struct icmp)]; // buffer for receiving reply
+        struct sockaddr_in fromSockAddr;
+        socklen_t fromSockAddrLen = sizeof(fromSockAddr);
+        ssize_t numBytesRecv = recvfrom(sock, recvBuffer, sizeof(recvBuffer), 0, (struct sockaddr*)&fromSockAddr, &fromSockAddrLen);
+        if (numBytesRecv == -1) {
             std::cout << "recvfrom failed!" << std::endl;
+            close(sock);
             continue;
         }
 
-        ICMP_ECHO_REPLY* recvReply = (ICMP_ECHO_REPLY*)recvBuffer;
-        if (recvReply->Status == IP_SUCCESS) {
+        struct ip* ipHeader = (struct ip*)recvBuffer;
+        struct icmp* icmpReply = (struct icmp*)(recvBuffer + (ipHeader->ip_hl << 2));
+        if (icmpReply->icmp_type == ICMP_ECHOREPLY) {
             numConnected++;
         }
+
+        close(sock);
     }
 
     return numConnected;
 }
 
 
-const char* hosts[] = { "8.8.8.8", "8.8.4.4", "1.1.1.1" };
-int numHosts = sizeof(hosts) / sizeof(hosts[0]);
-int numConnected = ping(hosts, numHosts);
-std::cout << "Number of connected hosts: " << numConnected << std::endl;
+const char* hosts[] = { "8.8.8.8", "8.8.4.4", "1.1
