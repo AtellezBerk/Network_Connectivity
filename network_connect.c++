@@ -3,6 +3,9 @@
 #include <netdb.h>           // for getaddrinfo function
 #include <iostream>          // for console output
 #include <string.h>          // for memset function
+#include <unistd.h>          // for getpid function
+#include <cstdio>            // for std::endl
+
 
 int ping(const char** hosts, int numHosts) {
     int numConnected = 0;
@@ -70,4 +73,16 @@ int ping(const char** hosts, int numHosts) {
 }
 
 
-const char* hosts[] = { "8.8.8.8", "8.8.4.4", "1.1
+int main() {
+    const char* hosts[] = { "8.8.8.8", "8.8.4.4", "1.1.1.1" };
+    int numHosts = sizeof(hosts) / sizeof(hosts[0]);
+    int numConnected = ping(hosts, numHosts);
+    std::cout << "Number of connected hosts: " << numConnected << std::endl;
+
+    // Estimate the number of users based on the number of connected hosts
+    // You can adjust this estimate based on your knowledge of the network topology and usage patterns
+    int numUsers = (numConnected > 0) ? (numConnected + 1) : 0;
+    std::cout << "Number of users: " << numUsers << std::endl;
+
+    return 0;
+}
