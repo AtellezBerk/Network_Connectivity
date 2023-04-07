@@ -1,30 +1,41 @@
-#include <sys/socket.h>      // for socket programming
-#include <netinet/ip_icmp.h> // for ping functions
-#include <netdb.h>           // for getaddrinfo function
-#include <iostream>          // for console output
-#include <string.h>          // for memset function
-#include <unistd.h>          // for getpid function
-#include <cstdio>            // for std::endl
-
+#include <sys/socket.h>
+#include <netinet/ip_icmp.h>
+#include <netdb.h>
+#include <iostream>
+#include <string.h>
+#include <unistd.h>
+#include <cstdio>
+#include <arpa/inet.h>
 
 int ping(const char** hosts, int numHosts) {
     int numConnected = 0;
 
     for (int i = 0; i < numHosts; i++) {
-        struct addrinfo hints, * res;
+        std::cout << "Pinging host " << hosts[i] << std::endl;
+
+        struct addrinfo hints, *res;
         memset(&hints, 0, sizeof(hints));
         hints.ai_family = AF_INET;
-        hints.ai_socktype = SOCK_DGRAM;
-        hints.ai_protocol = IPPROTO_ICMP;
+        hints.ai_socktype = SOCK_RAW;
 
-        if (getaddrinfo(hosts[i], nullptr, &hints, &res) != 0) {
-            std::cout << "getaddrinfo failed!" << std::endl;
+        int getaddrinfoResult = getaddrinfo(hosts[i], nullptr, &hints, &res);
+        if (getaddrinfoResult != 0) {
+            std::cout << "getaddrinfo failed for host " << hosts[i] << ": " << gai_strerror(getaddrinfoResult) << std::endl;
             continue;
         }
 
-        int sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_ICMP);
+        int sock = socket(AF_INET, SOCK_RAW, IPPROTO_ICMP);
         if (sock < 0) {
-            std::cout << "socket creation failed!" << std::endl;
+            std::cout << "socket creation failed for host " << hosts[i] << ": " << strerror(errno) << std::endl;
+            continue;
+        }
+
+        struct timeval timeout;
+        timeout.tv_sec = 2; // Increase the timeout to 2 seconds
+        timeout.tv_usec = 0;
+        if (setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)) < 0) {
+            std::cout << "setsockopt failed for host " << hosts[i] << ": " << strerror(errno) << std::endl;
+            close(sock);
             continue;
         }
 
@@ -55,15 +66,18 @@ int ping(const char** hosts, int numHosts) {
         socklen_t fromSockAddrLen = sizeof(fromSockAddr);
         ssize_t numBytesRecv = recvfrom(sock, recvBuffer, sizeof(recvBuffer), 0, (struct sockaddr*)&fromSockAddr, &fromSockAddrLen);
         if (numBytesRecv == -1) {
-            std::cout << "recvfrom failed!" << std::endl;
+            std::cout << "recvfrom failed for host " << hosts[i] << ": " << strerror(errno) << std::endl;
             close(sock);
             continue;
         }
 
         struct ip* ipHeader = (struct ip*)recvBuffer;
         struct icmp* icmpReply = (struct icmp*)(recvBuffer + (ipHeader->ip_hl << 2));
-        if (icmpReply->icmp_type == ICMP_ECHOREPLY) {
+         if (icmpReply->icmp_type == ICMP_ECHOREPLY) {
+            std::cout << "Host " << hosts[i] << " is connected." << std::endl;
             numConnected++;
+        } else {
+            std::cout << "Received unexpected ICMP type " << static_cast<int>(icmpReply->icmp_type) << " from host " << hosts[i] << std::endl;
         }
 
         close(sock);
@@ -74,7 +88,7 @@ int ping(const char** hosts, int numHosts) {
 
 
 int main() {
-    const char* hosts[] = { "8.8.8.8", "8.8.4.4", "1.1.1.1" };
+    const char* hosts[] = { "8.8.8.8", "8.8.4.4", "1.1.1.1", "208.67.222.222", "208.67.220.220" };
     int numHosts = sizeof(hosts) / sizeof(hosts[0]);
     int numConnected = ping(hosts, numHosts);
     std::cout << "Number of connected hosts: " << numConnected << std::endl;
